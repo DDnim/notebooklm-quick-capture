@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NotebookLM Quick Capture</title>
+    <link rel="stylesheet" href="src/ui/ui.css" />
+  </head>
+  <body class="panel-shell side-shell">
+    <main class="panel side-panel">
+      <header class="panel-header">
+        <p class="eyebrow">NotebookLM</p>
+        <h1>Quick capture</h1>
+        <p id="sideSummary" class="subtle">No notebook configured yet.</p>
+      </header>
+
+      <section class="picker">
+        <div class="field-label-row">
+          <span>Notebook</span>
+          <button id="refreshNotebooks" class="mini-link" type="button">Refresh</button>
+        </div>
+        <select id="notebookSelect">
+          <option value="">Choose a notebook</option>
+        </select>
+
+        <label class="field">
+          <span>Notebook URL fallback</span>
+          <input id="notebookUrl" type="url" placeholder="Paste a NotebookLM URL if the list is unavailable" />
+        </label>
+
+        <button id="saveNotebook" class="button button-primary" type="button">Use this notebook</button>
+        <div class="actions actions-compact">
+          <button id="clipUrlFirst" class="button button-primary" type="button">Save page URL</button>
+          <button id="clipTextFirst" class="button button-primary" type="button">Save page text</button>
+        </div>
+        <div class="field-group">
+          <div class="field-label-row">
+            <span>Manual text</span>
+          </div>
+          <input id="manualTitle" type="text" placeholder="Optional title" />
+          <textarea id="manualContent" rows="7" placeholder="Paste or type the content you want to save to NotebookLM"></textarea>
+          <button id="saveManualText" class="button button-secondary button-block" type="button">Save typed text</button>
+        </div>
+        <p class="subtle helper-copy">Use the page right-click menu to save selected text.</p>
+        <p id="sideStatus" class="status" role="status" aria-live="polite"></p>
+        <p id="sideStatusMeta" class="status-meta"></p>
+      </section>
+
+      <section class="history">
+        <div class="history-header">
+          <h2>History</h2>
+          <button id="refreshHistory" class="link-button" type="button">Refresh</button>
+        </div>
+        <ol id="historyList" class="history-list"></ol>
+      </section>
+    </main>
+
+    <script src="src/ui/sidepanel.js"></script>
+  </body>
+</html>

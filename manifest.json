@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "NotebookLM Quick Capture",
+  "version": "0.3.0",
+  "description": "Save pages, selections, and pasted text into a NotebookLM notebook.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "contextMenus"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "action": {
+    "default_title": "NotebookLM Quick Capture",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "exclude_matches": ["https://notebooklm.google.com/*"],
+      "js": [
+        "src/lib/extractor.js",
+        "src/shared/clipModels.js",
+        "src/adapters/base/adapterRegistry.js",
+        "src/adapters/web/webAdapter.js",
+        "src/content/page-content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

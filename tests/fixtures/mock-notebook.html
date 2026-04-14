@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mock NotebookLM</title>
+    <style>
+      body { font-family: sans-serif; }
+      #menu { display: none; margin-top: 12px; }
+      #website-form,
+      #text-form { display: none; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <button id="add-source">Add source</button>
+    <div id="menu">
+      <button id="website-option">Website URL</button>
+      <button id="text-option">Copied text</button>
+    </div>
+
+    <div id="website-form">
+      <input id="website-input" type="url" placeholder="Paste URL" />
+      <button id="website-submit">Import</button>
+    </div>
+
+    <div id="text-form">
+      <textarea id="text-input" placeholder="Paste text"></textarea>
+      <button id="text-submit">Save</button>
+    </div>
+
+    <output id="saved-value"></output>
+
+    <script>
+      const menu = document.getElementById("menu");
+      const websiteForm = document.getElementById("website-form");
+      const textForm = document.getElementById("text-form");
+      const saved = document.getElementById("saved-value");
+
+      document.getElementById("add-source").addEventListener("click", () => {
+        menu.style.display = "block";
+      });
+
+      document.getElementById("website-option").addEventListener("click", () => {
+        websiteForm.style.display = "block";
+        textForm.style.display = "none";
+      });
+
+      document.getElementById("text-option").addEventListener("click", () => {
+        textForm.style.display = "block";
+        websiteForm.style.display = "none";
+      });
+
+      document.getElementById("website-submit").addEventListener("click", () => {
+        saved.textContent = document.getElementById("website-input").value;
+      });
+
+      document.getElementById("text-submit").addEventListener("click", () => {
+        saved.textContent = document.getElementById("text-input").value;
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NotebookLM Quick Capture</title>
+    <link rel="stylesheet" href="src/ui/ui.css" />
+  </head>
+  <body class="panel-shell">
+    <main class="panel">
+      <header class="panel-header">
+        <p class="eyebrow">NotebookLM</p>
+        <h1>Quick capture</h1>
+        <p class="subtle">Save the current page, your selection, or your own pasted text into NotebookLM.</p>
+      </header>
+
+      <div class="field-group">
+        <div class="field-label-row">
+          <span>Notebook</span>
+          <button id="refreshNotebooks" class="mini-link" type="button">Refresh</button>
+        </div>
+        <select id="notebookSelect">
+          <option value="">Choose a notebook</option>
+        </select>
+      </div>
+
+      <div class="actions">
+        <button id="clipUrlFirst" class="button button-primary" type="button">Save page URL</button>
+        <button id="clipTextFirst" class="button button-primary" type="button">Save page text</button>
+      </div>
+
+      <section class="manual-section">
+        <div class="field-group">
+          <div class="field-label-row">
+            <span>Manual text</span>
+          </div>
+          <input id="manualTitle" type="text" placeholder="Optional title" />
+          <textarea id="manualContent" rows="6" placeholder="Paste or type the content you want to save to NotebookLM"></textarea>
+          <button id="saveManualText" class="button button-secondary button-block" type="button">Save typed text</button>
+        </div>
+      </section>
+
+      <p class="subtle helper-copy">Use the page right-click menu to save selected text.</p>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p id="statusMeta" class="status-meta"></p>
+    </main>
+
+    <script src="src/ui/popup.js"></script>
+  </body>
+</html>

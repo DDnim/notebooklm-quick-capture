@@ -1,0 +1,3 @@
+node_modules/
+tmp_inspect/
+tests/e2e/.tmp-extension-profile/
