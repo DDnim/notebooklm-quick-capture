@@ -11,7 +11,10 @@
       <header class="panel-header">
         <p class="eyebrow">NotebookLM</p>
         <h1>Quick capture</h1>
-        <p class="subtle">Save the current page, your selection, or your own pasted text into NotebookLM.</p>
+        <div class="status-container">
+          <p id="status" class="subtle" role="status" aria-live="polite">Save the current page, your selection, or your own pasted text into NotebookLM.</p>
+          <p id="statusMeta" class="status-meta"></p>
+        </div>
       </header>
 
       <div class="field-group">
@@ -25,8 +28,14 @@
       </div>
 
       <div class="actions">
-        <button id="clipUrlFirst" class="button button-primary" type="button">Save page URL</button>
-        <button id="clipTextFirst" class="button button-primary" type="button">Save page text</button>
+        <button id="clipUrlFirst" class="button button-primary" type="button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          Save page URL
+        </button>
+        <button id="clipTextFirst" class="button button-primary" type="button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="17" y1="18" x2="3" y2="18"></line></svg>
+          Save page text
+        </button>
       </div>
 
       <section class="manual-section">
@@ -36,14 +45,12 @@
           </div>
           <input id="manualTitle" type="text" placeholder="Optional title" />
           <textarea id="manualContent" rows="6" placeholder="Paste or type the content you want to save to NotebookLM"></textarea>
-          <button id="saveManualText" class="button button-secondary button-block" type="button">Save typed text</button>
+          <button id="saveManualText" class="button button-secondary button-block" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            Save typed text
+          </button>
         </div>
       </section>
-
-      <p class="subtle helper-copy">Use the page right-click menu to save selected text.</p>
-
-      <p id="status" class="status" role="status" aria-live="polite"></p>
-      <p id="statusMeta" class="status-meta"></p>
     </main>
 
     <script src="src/ui/popup.js"></script>

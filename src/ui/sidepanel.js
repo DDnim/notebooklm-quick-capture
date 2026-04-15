@@ -1,8 +1,6 @@
 (function () {
   const summaryNode = document.getElementById("sideSummary");
   const notebookSelect = document.getElementById("notebookSelect");
-  const notebookUrlInput = document.getElementById("notebookUrl");
-  const saveNotebookButton = document.getElementById("saveNotebook");
   const clipUrlFirstButton = document.getElementById("clipUrlFirst");
   const clipTextFirstButton = document.getElementById("clipTextFirst");
   const manualTitleInput = document.getElementById("manualTitle");
@@ -17,7 +15,6 @@
 
   refreshButton.addEventListener("click", refresh);
   refreshNotebooksButton.addEventListener("click", onRefreshNotebooks);
-  saveNotebookButton.addEventListener("click", onSaveNotebook);
   clipUrlFirstButton.addEventListener("click", () => onClipPage("url"));
   clipTextFirstButton.addEventListener("click", () => onClipPage("text"));
   saveManualTextButton.addEventListener("click", onSaveManualText);
@@ -39,15 +36,10 @@
 
     notebooks = notebooksResponse.ok ? notebooksResponse.notebooks || [] : [];
     populateNotebookSelect(notebooks, settingsResponse.settings);
-    notebookUrlInput.value = settingsResponse.settings.notebookUrl || "";
     if (!notebooksResponse.ok && isNotebookListUnsupported(notebooksResponse)) {
-      renderStatus("Notebook list is unavailable in the current background worker. URL fallback is still available.");
+      renderStatus("Notebook list is unavailable in the current background worker.", true);
     }
-    summaryNode.textContent = settingsResponse.settings.notebookName
-      ? `Selected notebook: ${settingsResponse.settings.notebookName}`
-      : settingsResponse.settings.notebookUrl
-        ? `Selected notebook URL: ${settingsResponse.settings.notebookUrl}`
-        : "No notebook configured yet.";
+    renderSummary(settingsResponse.settings);
 
     historyList.innerHTML = "";
 
@@ -82,7 +74,7 @@
       if (isNotebookListUnsupported(notebooksResponse)) {
         notebooks = [];
         populateNotebookSelect(notebooks, settingsResponse.ok ? settingsResponse.settings : {});
-        renderStatus("Notebook list is unavailable in the current background worker. URL fallback is still available.");
+        renderStatus("Notebook list is unavailable in the current background worker.", true);
         return;
       }
       renderStatus(
@@ -97,45 +89,11 @@
     renderStatus(notebooks.length > 0 ? "Notebook list refreshed." : "No notebooks found.");
   }
 
-  async function onSaveNotebook() {
-    const selected = getSelectedNotebook();
-    renderStatus("Saving notebook...");
-    const response = await sendMessage({
-      type: "SAVE_SETTINGS",
-      settings: {
-        notebookId: selected ? selected.id : "",
-        notebookName: selected ? selected.name : "",
-        notebookUrl: selected ? selected.url : notebookUrlInput.value
-      }
-    });
-
-    if (!response.ok) {
-      renderStatus(response.error || "Could not save notebook.", true);
-      return;
-    }
-
-    summaryNode.textContent = response.settings.notebookName
-      ? `Selected notebook: ${response.settings.notebookName}`
-      : response.settings.notebookUrl
-        ? `Selected notebook URL: ${response.settings.notebookUrl}`
-        : "No notebook configured yet.";
-    renderStatus("Notebook updated.", false, {
-      notebookUrl: response.settings.notebookUrl
-    });
-  }
-
   async function onClipPage(mode) {
     setClipButtonsDisabled(true);
     renderStatus(mode === "url" ? "Saving current page as a website source..." : "Saving current page as copied text...");
 
-    const saveResponse = await sendMessage({
-      type: "SAVE_SETTINGS",
-      settings: {
-        notebookId: getSelectedNotebook() ? getSelectedNotebook().id : "",
-        notebookName: getSelectedNotebook() ? getSelectedNotebook().name : "",
-        notebookUrl: getSelectedNotebook() ? getSelectedNotebook().url : notebookUrlInput.value
-      }
-    });
+    const saveResponse = await saveSelectedNotebookSettings();
 
     if (!saveResponse.ok) {
       renderStatus(saveResponse.error || "Could not save notebook.", true);
@@ -171,14 +129,7 @@
     saveManualTextButton.disabled = true;
     renderStatus("Saving typed text to NotebookLM...");
 
-    const saveResponse = await sendMessage({
-      type: "SAVE_SETTINGS",
-      settings: {
-        notebookId: getSelectedNotebook() ? getSelectedNotebook().id : "",
-        notebookName: getSelectedNotebook() ? getSelectedNotebook().name : "",
-        notebookUrl: getSelectedNotebook() ? getSelectedNotebook().url : notebookUrlInput.value
-      }
-    });
+    const saveResponse = await saveSelectedNotebookSettings();
 
     if (!saveResponse.ok) {
       renderStatus(saveResponse.error || "Could not save notebook.", true);
@@ -210,11 +161,21 @@
     saveManualTextButton.disabled = false;
   }
 
-  function onNotebookSelectChange() {
-    const selected = getSelectedNotebook();
-    if (selected) {
-      notebookUrlInput.value = selected.url;
+  async function onNotebookSelectChange() {
+    renderStatusMeta("");
+    if (!notebookSelect.value) {
+      return;
     }
+
+    renderStatus("Saving notebook...");
+    const response = await saveSelectedNotebookSettings();
+    if (!response.ok) {
+      renderStatus(response.error || "Could not save notebook.", true);
+      return;
+    }
+
+    renderSummary(response.settings);
+    renderStatus("");
   }
 
   function sendMessage(message) {
@@ -245,6 +206,53 @@
 
   function getSelectedNotebook() {
     return notebooks.find((notebook) => notebook.id === notebookSelect.value) || null;
+  }
+
+  async function saveSelectedNotebookSettings() {
+    const selected = getSelectedNotebook();
+    if (!selected) {
+      return {
+        ok: false,
+        error: "Choose a notebook first."
+      };
+    }
+
+    return sendMessage({
+      type: "SAVE_SETTINGS",
+      settings: {
+        notebookId: selected.id,
+        notebookName: selected.name,
+        notebookUrl: selected.url
+      }
+    });
+  }
+
+  function renderSummary(settings) {
+    const configuredNotebook =
+      notebooks.find((notebook) => notebook.id === settings.notebookId) || null;
+    const notebookName =
+      (configuredNotebook && configuredNotebook.name) || settings.notebookName || "";
+    const notebookUrl =
+      (configuredNotebook && configuredNotebook.url) || settings.notebookUrl || "";
+
+    summaryNode.innerHTML = "";
+    if (!notebookName) {
+      summaryNode.textContent = "No notebook configured yet.";
+      return;
+    }
+
+    summaryNode.appendChild(document.createTextNode("Selected notebook: "));
+    if (!notebookUrl) {
+      summaryNode.appendChild(document.createTextNode(`·${notebookName}`));
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = notebookUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = `·${notebookName}`;
+    summaryNode.appendChild(link);
   }
 
   function renderStatus(message, isError, options) {

@@ -3,6 +3,7 @@ importScripts(
   "storage/settingsRepo.js",
   "storage/historyRepo.js",
   "core/clip/dedupe.js",
+  "background/tabMessageBridge.js",
   "background/notebooklmDataService.js",
   "writers/notebooklm-rpc/notebookRpcWriter.js",
   "background/jobRunner.js"
@@ -14,6 +15,15 @@ importScripts(
   const historyRepo = ClipperHistoryRepo.createHistoryRepo(chrome, { limit: 12 });
   const dedupeService = ClipperDedupe.createDedupeService(ClipperClipModels);
   const notebookService = ClipperNotebooklmDataService.createNotebooklmDataService();
+  const tabMessageBridge = ClipperTabMessageBridge.createTabMessageBridge(chrome, {
+    contentScriptFiles: [
+      "src/lib/extractor.js",
+      "src/shared/clipModels.js",
+      "src/adapters/base/adapterRegistry.js",
+      "src/adapters/web/webAdapter.js",
+      "src/content/page-content.js"
+    ]
+  });
   const writer = ClipperNotebookRpcWriter.createNotebookRpcWriter({
     notebookService
   });
@@ -142,6 +152,9 @@ importScripts(
     if (!/^https?:/i.test(pageTab.url)) {
       throw new Error("This extension only works on normal web pages.");
     }
+    if (!ClipperTabMessageBridge.canInjectContentScript(pageTab.url)) {
+      throw new Error("This extension only works on normal web pages.");
+    }
 
     const documentRef = await extractClipDocument(pageTab.id);
     return runClipRequest({
@@ -217,7 +230,7 @@ importScripts(
   }
 
   async function extractClipDocument(tabId, options) {
-    const response = await sendMessageToTab(tabId, {
+    const response = await tabMessageBridge.sendMessageToTab(tabId, {
       type: "EXTRACT_CLIP_DOCUMENT",
       selectionText: options && options.selectionText ? options.selectionText : "",
       preferSelection: Boolean(options && options.preferSelection)
@@ -407,15 +420,6 @@ importScripts(
   }
 
   function sendMessageToTab(tabId, message) {
-    return new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tabId, message, (response) => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    return tabMessageBridge.sendMessageToTab(tabId, message);
   }
 })();

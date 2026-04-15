@@ -34,7 +34,7 @@
       clipTextFirstButton.addEventListener("click", () => onClipPage("text"));
       saveManualTextButton.addEventListener("click", onSaveManualText);
       refreshNotebooksButton.addEventListener("click", onRefreshNotebooks);
-      notebookSelect.addEventListener("change", clearStatusMeta);
+      notebookSelect.addEventListener("change", onNotebookSelectChange);
     }
 
     async function onClipPage(mode) {
@@ -182,6 +182,24 @@
 
     function clearStatusMeta() {
       renderStatusMeta("");
+    }
+
+    async function onNotebookSelectChange() {
+      clearStatusMeta();
+      if (!notebookSelect.value) {
+        return;
+      }
+
+      renderStatus("Saving notebook...");
+      const saveResponse = await saveSettings();
+      if (!saveResponse.ok) {
+        renderStatus(saveResponse.error || "Could not save notebook.", true);
+        return;
+      }
+
+      renderStatus("Notebook updated.", false, {
+        notebookUrl: saveResponse.settings.notebookUrl
+      });
     }
 
   function populateNotebookSelect(items, settings) {
