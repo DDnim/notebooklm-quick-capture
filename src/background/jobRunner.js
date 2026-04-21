@@ -24,7 +24,10 @@
         let remoteDuplicate = null;
         if (notebookService && request.targetNotebook.id) {
           try {
-            const sources = await notebookService.listSources(request.targetNotebook.id);
+            const sources = await notebookService.listSources(
+              request.targetNotebook.id,
+              request.targetNotebook.authUser
+            );
             remoteDuplicate = dedupeService.findRemoteDuplicate(request.document, sources);
           } catch (error) {
             remoteDuplicate = null;

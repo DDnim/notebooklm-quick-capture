@@ -19,12 +19,12 @@
 
     <div id="website-form">
       <input id="website-input" type="url" placeholder="Paste URL" />
-      <button id="website-submit">Import</button>
+      <button id="website-submit" disabled>Import</button>
     </div>
 
     <div id="text-form">
       <textarea id="text-input" placeholder="Paste text"></textarea>
-      <button id="text-submit">Save</button>
+      <button id="text-submit" disabled>Save</button>
     </div>
 
     <output id="saved-value"></output>
@@ -34,6 +34,10 @@
       const websiteForm = document.getElementById("website-form");
       const textForm = document.getElementById("text-form");
       const saved = document.getElementById("saved-value");
+      const websiteInput = document.getElementById("website-input");
+      const textInput = document.getElementById("text-input");
+      const websiteSubmit = document.getElementById("website-submit");
+      const textSubmit = document.getElementById("text-submit");
 
       document.getElementById("add-source").addEventListener("click", () => {
         menu.style.display = "block";
@@ -49,12 +53,20 @@
         websiteForm.style.display = "none";
       });
 
-      document.getElementById("website-submit").addEventListener("click", () => {
-        saved.textContent = document.getElementById("website-input").value;
+      websiteInput.addEventListener("input", () => {
+        websiteSubmit.disabled = !websiteInput.value.trim();
       });
 
-      document.getElementById("text-submit").addEventListener("click", () => {
-        saved.textContent = document.getElementById("text-input").value;
+      textInput.addEventListener("input", () => {
+        textSubmit.disabled = !textInput.value.trim();
+      });
+
+      websiteSubmit.addEventListener("click", () => {
+        saved.textContent = websiteInput.value;
+      });
+
+      textSubmit.addEventListener("click", () => {
+        saved.textContent = textInput.value;
       });
     </script>
   </body>

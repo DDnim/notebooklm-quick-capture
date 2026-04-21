@@ -1,13 +1,23 @@
 {
   "manifest_version": 3,
   "name": "NotebookLM Quick Capture",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "description": "Save pages, selections, and pasted text into a NotebookLM notebook.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "contextMenus"],
+  "permissions": ["scripting", "storage", "tabs", "sidePanel", "contextMenus"],
   "host_permissions": ["http://*/*", "https://*/*"],
+  "icons": {
+    "16": "assets/icon-16.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
   "action": {
     "default_title": "NotebookLM Quick Capture",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
   },
   "background": {
     "service_worker": "src/background.js"

@@ -42,19 +42,64 @@
     return box.width > 0 && box.height > 0;
   }
 
+  function isTopmost(node) {
+    if (!node || !node.ownerDocument || typeof node.getBoundingClientRect !== "function") {
+      return false;
+    }
+
+    if (typeof node.ownerDocument.elementFromPoint !== "function") {
+      return true;
+    }
+
+    const box = node.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const view = node.ownerDocument.defaultView;
+    if (!view || x < 0 || y < 0 || x > view.innerWidth || y > view.innerHeight) {
+      return false;
+    }
+
+    const hit = node.ownerDocument.elementFromPoint(x, y);
+    return Boolean(hit && (hit === node || node.contains(hit) || hit.contains(node)));
+  }
+
+  function isDisabled(node) {
+    if (!node) {
+      return true;
+    }
+
+    if (node.disabled) {
+      return true;
+    }
+
+    const ariaDisabled = String(node.getAttribute("aria-disabled") || "").toLowerCase();
+    return ariaDisabled === "true";
+  }
+
   function matchesAny(text, phrases) {
     return phrases.some((phrase) => text.includes(normalizedText(phrase)));
   }
 
-  function findClickable(documentRef, phrases, rootNode) {
+  function findClickable(documentRef, phrases, rootNode, options) {
     const scope = rootNode || documentRef;
     const nodes = Array.from(scope.querySelectorAll(BUTTON_SELECTOR));
-    return nodes.find((node) => isVisible(node) && matchesAny(getText(node), phrases)) || null;
+    const enabledOnly = Boolean(options && options.enabledOnly);
+    return (
+      nodes.find(
+        (node) =>
+          isVisible(node) &&
+          isTopmost(node) &&
+          (!enabledOnly || !isDisabled(node)) &&
+          matchesAny(getText(node), phrases)
+      ) || null
+    );
   }
 
   function findField(documentRef, phrases, rootNode) {
     const scope = rootNode || documentRef;
-    const fields = Array.from(scope.querySelectorAll(FIELD_SELECTOR));
+    const fields = Array.from(scope.querySelectorAll(FIELD_SELECTOR)).filter(
+      (field) => isVisible(field) && isTopmost(field)
+    );
     const labelled = fields.find((field) => matchesAny(getText(field), phrases));
     if (labelled) {
       return labelled;
@@ -84,7 +129,7 @@
   function setFieldValue(field, value) {
     if ("value" in field) {
       field.focus();
-      field.value = value;
+      setNativeValue(field, value);
       field.dispatchEvent(new Event("input", { bubbles: true }));
       field.dispatchEvent(new Event("change", { bubbles: true }));
       return;
@@ -97,7 +142,26 @@
     }
   }
 
+  function setNativeValue(field, value) {
+    const prototype = Object.getPrototypeOf(field);
+    const descriptor =
+      (prototype && Object.getOwnPropertyDescriptor(prototype, "value")) ||
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value") ||
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value");
+
+    if (descriptor && typeof descriptor.set === "function") {
+      descriptor.set.call(field, value);
+      return;
+    }
+
+    field.value = value;
+  }
+
   async function openAddSource(documentRef) {
+    if (hasSourcePickerOpen(documentRef) || hasWebsiteFormOpen(documentRef)) {
+      return null;
+    }
+
     const button = await waitFor(documentRef, () =>
       findClickable(documentRef, ["add source", "add sources", "new source"])
     );
@@ -114,12 +178,17 @@
 
   async function submitSource(documentRef) {
     const submit = await waitFor(documentRef, () => {
-      const explicit = findClickable(documentRef, ["insert", "save", "import", "create", "done"]);
+      const explicit = findClickable(
+        documentRef,
+        ["insert", "save", "import", "create", "done"],
+        null,
+        { enabledOnly: true }
+      );
       if (explicit) {
         return explicit;
       }
 
-      const fallback = findClickable(documentRef, ["add"]);
+      const fallback = findClickable(documentRef, ["add"], null, { enabledOnly: true });
       if (fallback && !getText(fallback).includes("add source")) {
         return fallback;
       }
@@ -132,7 +201,9 @@
 
   async function addViaWebsite(documentRef, url) {
     await openAddSource(documentRef);
-    await openSourceType(documentRef, ["website", "web url", "link", "url"]);
+    if (!hasWebsiteFormOpen(documentRef)) {
+      await openSourceType(documentRef, ["website", "web url", "link", "url"]);
+    }
     const field = await waitFor(documentRef, () =>
       findField(documentRef, ["url", "link", "website", "https://"])
     );
@@ -141,9 +212,27 @@
     return { mode: "url" };
   }
 
+  async function prepareViaWebsite(documentRef, url) {
+    await openAddSource(documentRef);
+    if (!hasWebsiteFormOpen(documentRef)) {
+      await openSourceType(documentRef, ["website", "web url", "link", "url"]);
+    }
+    const field = await waitFor(documentRef, () =>
+      findField(documentRef, ["url", "link", "website", "https://"])
+    );
+    setFieldValue(field, url);
+    return {
+      mode: "url",
+      awaitingUserAction: true,
+      userAction: "click_insert"
+    };
+  }
+
   async function addViaText(documentRef, text) {
     await openAddSource(documentRef);
-    await openSourceType(documentRef, ["copied text", "text", "paste text"]);
+    if (!hasTextFormOpen(documentRef)) {
+      await openSourceType(documentRef, ["copied text", "text", "paste text"]);
+    }
     const field = await waitFor(documentRef, () =>
       findField(documentRef, ["text", "paste", "notes", "content"])
     );
@@ -169,6 +258,10 @@
 
     if (!sourceUrl) {
       throw new Error("Missing page payload.");
+    }
+
+    if (options && options.handoffMode === "fill-only" && clipMode === "url") {
+      return prepareViaWebsite(documentRef, sourceUrl);
     }
 
     if (clipMode === "url") {
@@ -212,6 +305,7 @@
     clipDocument,
     clipPage,
     addViaWebsite,
+    prepareViaWebsite,
     addViaText,
     waitFor,
     findClickable,
@@ -219,4 +313,46 @@
     setFieldValue,
     normalizedText
   };
+
+  function hasSourcePickerOpen(documentRef) {
+    return Boolean(findClickable(documentRef, ["websites", "website", "drive", "copied text"]));
+  }
+
+  function hasWebsiteFormOpen(documentRef) {
+    const field = findField(documentRef, ["paste any links", "url", "link", "website", "https://"]);
+    if (!field) {
+      return false;
+    }
+
+    const placeholder = normalizedText(field.getAttribute("placeholder") || "");
+    const isUrlField =
+      field.getAttribute("type") === "url" ||
+      matchesAny(placeholder, ["paste any links", "url", "link", "website", "https://"]);
+
+    return Boolean(
+      isUrlField &&
+        findClickable(documentRef, ["insert", "import", "save", "done"], null, {
+          enabledOnly: true
+        })
+    );
+  }
+
+  function hasTextFormOpen(documentRef) {
+    const field = findField(documentRef, ["paste text", "text", "notes", "content"]);
+    if (!field) {
+      return false;
+    }
+
+    const placeholder = normalizedText(field.getAttribute("placeholder") || "");
+    const isTextField =
+      field.tagName === "TEXTAREA" ||
+      matchesAny(placeholder, ["paste text", "text", "notes", "content"]);
+
+    return Boolean(
+      isTextField &&
+        findClickable(documentRef, ["save", "insert", "done"], null, {
+          enabledOnly: true
+        })
+    );
+  }
 });

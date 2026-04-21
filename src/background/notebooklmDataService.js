@@ -10,6 +10,7 @@
     maxSourcesPerNotebook: 50,
     maxCharsPerSource: 500000
   };
+  const DEFAULT_ACCOUNT_PROBE_LIMIT = 6;
 
   const SOURCE_TYPE_MAP = {
     0: "audio",
@@ -39,23 +40,57 @@
     const tokenCache = new Map();
     const notebookCache = new Map();
     const sourceCache = new Map();
+    const accountCache = {
+      timestamp: 0,
+      value: []
+    };
 
     return {
+      async listAccounts(forceRefresh) {
+        if (!forceRefresh && nowFn() - accountCache.timestamp < cacheTtlMs) {
+          return accountCache.value;
+        }
+
+        const accounts = [];
+        const seen = new Set();
+
+        for (let authUser = 0; authUser < DEFAULT_ACCOUNT_PROBE_LIMIT; authUser += 1) {
+          const account = await probeAccount(fetchImpl, authUser).catch(() => null);
+          if (!account) {
+            continue;
+          }
+
+          const dedupeKey = account.id || account.email || String(account.authUser);
+          if (seen.has(dedupeKey)) {
+            continue;
+          }
+
+          seen.add(dedupeKey);
+          accounts.push(account);
+        }
+
+        accountCache.timestamp = nowFn();
+        accountCache.value = accounts;
+        return accounts;
+      },
+
       async listNotebooks(requestedAuthUser, forceRefresh) {
-        const cacheKey = requestedAuthUser === undefined ? "default" : String(requestedAuthUser);
+        const authUser = normalizeAuthUser(requestedAuthUser);
+        const cacheKey = authUser === undefined ? "default" : String(authUser);
         const cached = notebookCache.get(cacheKey);
         if (!forceRefresh && cached && nowFn() - cached.timestamp < cacheTtlMs) {
           return cached.value;
         }
 
-        const raw = await callRpc(fetchImpl, tokenCache, requestedAuthUser, "wXbhsf", [null, 1, null, [2]], "/");
+        const raw = await callRpc(fetchImpl, tokenCache, authUser, "wXbhsf", [null, 1, null, [2]], "/");
         const notebooks = parseNotebookList(raw);
         notebookCache.set(cacheKey, { timestamp: nowFn(), value: notebooks });
         return notebooks;
       },
 
       async listSources(notebookId, requestedAuthUser, forceRefresh) {
-        const cacheKey = `${requestedAuthUser === undefined ? "default" : String(requestedAuthUser)}:${notebookId}`;
+        const authUser = normalizeAuthUser(requestedAuthUser);
+        const cacheKey = `${authUser === undefined ? "default" : String(authUser)}:${notebookId}`;
         const cached = sourceCache.get(cacheKey);
         if (!forceRefresh && cached && nowFn() - cached.timestamp < cacheTtlMs) {
           return cached.value;
@@ -64,7 +99,7 @@
         const raw = await callRpc(
           fetchImpl,
           tokenCache,
-          requestedAuthUser,
+          authUser,
           "rLM1Ne",
           [notebookId, null, [2]],
           `/notebook/${notebookId}`
@@ -75,25 +110,38 @@
       },
 
       async addSources(notebookId, urls, requestedAuthUser) {
+        const authUser = normalizeAuthUser(requestedAuthUser);
         const payload = [urls.map(buildUrlSourcePayload), notebookId];
-        await callRpc(fetchImpl, tokenCache, requestedAuthUser, "izAoDd", payload, `/notebook/${notebookId}`);
-        clearSourceCache(sourceCache, notebookId, requestedAuthUser);
+        const responseText = await callRpc(fetchImpl, tokenCache, authUser, "izAoDd", payload, `/notebook/${notebookId}`);
+        clearSourceCache(sourceCache, notebookId, authUser);
+        return responseText;
+      },
+
+      async addDriveSource(notebookId, input, requestedAuthUser) {
+        const authUser = normalizeAuthUser(requestedAuthUser);
+        const payload = [ [buildDriveSourcePayload(input)], notebookId ];
+        const responseText = await callRpc(fetchImpl, tokenCache, authUser, "izAoDd", payload, `/notebook/${notebookId}`);
+        clearSourceCache(sourceCache, notebookId, authUser);
+        return responseText;
       },
 
       async addTextSource(notebookId, content, title, requestedAuthUser) {
+        const authUser = normalizeAuthUser(requestedAuthUser);
         const payload = [
           [buildTextSourcePayload({ title, content })],
           notebookId,
           [2],
           [1, null, null, null, null, null, null, null, null, null, [1]]
         ];
-        await callRpc(fetchImpl, tokenCache, requestedAuthUser, "izAoDd", payload, `/notebook/${notebookId}`);
-        clearSourceCache(sourceCache, notebookId, requestedAuthUser);
+        const responseText = await callRpc(fetchImpl, tokenCache, authUser, "izAoDd", payload, `/notebook/${notebookId}`);
+        clearSourceCache(sourceCache, notebookId, authUser);
+        return responseText;
       },
 
       async getAccountLimits(requestedAuthUser) {
+        const authUser = normalizeAuthUser(requestedAuthUser);
         try {
-          const raw = await callRpc(fetchImpl, tokenCache, requestedAuthUser, "ZwVcOc", [], "/");
+          const raw = await callRpc(fetchImpl, tokenCache, authUser, "ZwVcOc", [], "/");
           const parsed = parseRpcJson(raw);
           const payload = parsed && parsed[0] && parsed[0][2] ? JSON.parse(parsed[0][2]) : null;
           const values = payload && payload[0] && payload[0][1];
@@ -119,23 +167,34 @@
         return buildNotebookUrl(notebookId);
       },
 
+      parseDriveSource(input) {
+        return parseDriveSource(input);
+      },
+
+      extractCreatedSourceId(rawText) {
+        return extractCreatedSourceId(rawText);
+      },
+
       clearCaches() {
         notebookCache.clear();
         sourceCache.clear();
+        accountCache.timestamp = 0;
+        accountCache.value = [];
       }
     };
   }
 
   async function callRpc(fetchImpl, tokenCache, authUser, rpcId, payload, sourcePath) {
-    const tokens = await getAuthTokens(fetchImpl, tokenCache, authUser);
+    const normalizedAuthUser = normalizeAuthUser(authUser);
+    const tokens = await getAuthTokens(fetchImpl, tokenCache, normalizedAuthUser);
     const query = new URLSearchParams();
     query.append("rpcids", rpcId);
     query.append("source-path", sourcePath || "/");
     query.append("bl", tokens.buildToken);
     query.append("_reqid", String(Math.floor(Math.random() * 900000) + 100000));
     query.append("rt", "c");
-    if (authUser !== undefined) {
-      query.append("authuser", String(authUser));
+    if (normalizedAuthUser !== undefined) {
+      query.append("authuser", String(normalizedAuthUser));
     }
 
     const url = `https://notebooklm.google.com/_/LabsTailwindUi/data/batchexecute?${query.toString()}`;
@@ -154,7 +213,7 @@
     });
 
     if (!response.ok) {
-      tokenCache.delete(authUser === undefined ? "default" : String(authUser));
+      tokenCache.delete(normalizedAuthUser === undefined ? "default" : String(normalizedAuthUser));
       throw new Error(`NotebookLM RPC failed: ${response.status} ${response.statusText}`);
     }
 
@@ -162,28 +221,14 @@
   }
 
   async function getAuthTokens(fetchImpl, tokenCache, authUser) {
-    const cacheKey = authUser === undefined ? "default" : String(authUser);
+    const normalizedAuthUser = normalizeAuthUser(authUser);
+    const cacheKey = normalizedAuthUser === undefined ? "default" : String(normalizedAuthUser);
     const cached = tokenCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 60000) {
       return cached.tokens;
     }
 
-    const pageUrl =
-      authUser === undefined
-        ? "https://notebooklm.google.com/"
-        : `https://notebooklm.google.com/?authuser=${authUser}&pageId=none`;
-    const response = await fetchImpl(pageUrl, {
-      credentials: "include",
-      headers: {
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load NotebookLM: ${response.status} ${response.statusText}`);
-    }
-
-    const html = await response.text();
+    const html = await fetchNotebookPageHtml(fetchImpl, normalizedAuthUser);
     if (
       html.includes("accounts.google.com/v3/signin") ||
       html.includes("accounts.google.com/signin") ||
@@ -201,6 +246,57 @@
     const tokens = { buildToken, authToken };
     tokenCache.set(cacheKey, { timestamp: Date.now(), tokens });
     return tokens;
+  }
+
+  async function fetchNotebookPageHtml(fetchImpl, authUser) {
+    const normalizedAuthUser = normalizeAuthUser(authUser);
+    const pageUrl =
+      normalizedAuthUser === undefined
+        ? "https://notebooklm.google.com/"
+        : `https://notebooklm.google.com/?authuser=${normalizedAuthUser}&pageId=none`;
+    const response = await fetchImpl(pageUrl, {
+      credentials: "include",
+      headers: {
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load NotebookLM: ${response.status} ${response.statusText}`);
+    }
+
+    return response.text();
+  }
+
+  async function probeAccount(fetchImpl, authUser) {
+    const normalizedAuthUser = normalizeAuthUser(authUser);
+    if (normalizedAuthUser === undefined) {
+      return null;
+    }
+
+    const html = await fetchNotebookPageHtml(fetchImpl, normalizedAuthUser);
+    if (
+      html.includes("accounts.google.com/v3/signin") ||
+      html.includes("accounts.google.com/signin") ||
+      html.includes('<base href="https://accounts.google.com/')
+    ) {
+      return null;
+    }
+
+    const email = extractPageToken("oPEP7c", html);
+    const id = extractPageToken("S06Grb", html);
+    if (!email || !id) {
+      return null;
+    }
+
+    return {
+      id,
+      authUser: normalizedAuthUser,
+      email,
+      name: String(email).split("@")[0] || email,
+      isDefault: normalizedAuthUser === 0,
+      label: normalizedAuthUser === 0 ? `${email} (default)` : email
+    };
   }
 
   function extractPageToken(tokenName, html) {
@@ -277,6 +373,15 @@
           type = "pdf";
         }
 
+        let driveFileId = "";
+        const driveMeta = metadata[0];
+        const altDriveMeta = metadata[9];
+        if (Array.isArray(driveMeta) && typeof driveMeta[0] === "string") {
+          driveFileId = driveMeta[0];
+        } else if (Array.isArray(altDriveMeta) && typeof altDriveMeta[0] === "string") {
+          driveFileId = altDriveMeta[0];
+        }
+
         const urls = Array.isArray(metadata[5]) ? metadata[5] : [];
         const altUrls = Array.isArray(metadata[7]) ? metadata[7] : [];
         const sourceUrl =
@@ -284,7 +389,7 @@
             ? urls[0]
             : typeof altUrls[0] === "string"
               ? altUrls[0]
-              : "";
+              : buildDriveSourceUrl(type, driveFileId);
 
         return {
           id,
@@ -292,7 +397,8 @@
           type,
           status: SOURCE_STATUS_MAP[statusBits[1]] || "processing",
           url: sourceUrl,
-          normalizedUrl: normalizeUrl(sourceUrl)
+          normalizedUrl: normalizeUrl(sourceUrl),
+          driveFileId
         };
       });
   }
@@ -324,8 +430,140 @@
     return [null, null, [value]];
   }
 
+  function buildDriveSourcePayload(input) {
+    const parsed = typeof input === "string" ? parseDriveSource(input) : input;
+    if (!parsed || !parsed.fileId || !parsed.sourceTypeCode) {
+      throw new Error("Could not build a Google Drive source payload from the provided URL.");
+    }
+
+    return [null, null, parsed.fileId, null, parsed.sourceTypeCode];
+  }
+
   function buildTextSourcePayload(input) {
     return [null, [input.title || "Pasted Text", input.content], null, 2, null, null, null, null, null, null, 1];
+  }
+
+  function parseDriveSource(input) {
+    const value = String(input || "").trim();
+    if (!value) {
+      return null;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(value);
+    } catch (error) {
+      return null;
+    }
+
+    const host = parsedUrl.hostname.replace(/^www\./i, "").toLowerCase();
+    const path = parsedUrl.pathname;
+    let match = null;
+    let sourceTypeCode = 0;
+    let sourceType = "";
+
+    if (host === "docs.google.com") {
+      match = path.match(/^\/document(?:\/u\/\d+)?\/d\/([^/]+)/);
+      if (match) {
+        sourceTypeCode = 1;
+        sourceType = "google_doc";
+      }
+
+      if (!match) {
+        match = path.match(/^\/presentation(?:\/u\/\d+)?\/d\/([^/]+)/);
+        if (match) {
+          sourceTypeCode = 2;
+          sourceType = "google_slides";
+        }
+      }
+
+      if (!match) {
+        match = path.match(/^\/spreadsheets(?:\/u\/\d+)?\/d\/([^/]+)/);
+        if (match) {
+          sourceTypeCode = 14;
+          sourceType = "google_sheets";
+        }
+      }
+    }
+
+    if (!match || !sourceTypeCode) {
+      return null;
+    }
+
+    const fileId = match[1];
+    return {
+      fileId,
+      sourceTypeCode,
+      sourceType,
+      normalizedUrl: buildDriveSourceUrl(sourceType, fileId)
+    };
+  }
+
+  function buildDriveSourceUrl(type, fileId) {
+    if (!fileId) {
+      return "";
+    }
+
+    if (type === "google_doc") {
+      return `https://docs.google.com/document/d/${fileId}/edit`;
+    }
+
+    if (type === "google_slides") {
+      return `https://docs.google.com/presentation/d/${fileId}/edit`;
+    }
+
+    if (type === "google_sheets") {
+      return `https://docs.google.com/spreadsheets/d/${fileId}/edit`;
+    }
+
+    return "";
+  }
+
+  function extractCreatedSourceId(rawText) {
+    if (!rawText) {
+      return "";
+    }
+
+    try {
+      const parsed = parseRpcJson(rawText);
+      const firstChunk = parsed && parsed[0];
+      const payload = firstChunk && firstChunk[2];
+      const normalized = typeof payload === "string" ? JSON.parse(payload) : payload;
+      const candidates = collectStrings(normalized);
+      const id = candidates.find((value) => isLikelySourceId(value));
+      if (id) {
+        return id;
+      }
+    } catch (error) {
+      // Fall through to the raw scan below.
+    }
+
+    const rawCandidates = collectStrings(String(rawText));
+    return rawCandidates.find((value) => isLikelySourceId(value)) || "";
+  }
+
+  function collectStrings(input) {
+    if (typeof input === "string") {
+      return input.match(/[A-Za-z0-9_-]{8,}/g) || [];
+    }
+
+    if (!Array.isArray(input)) {
+      return [];
+    }
+
+    const values = [];
+    input.forEach((item) => {
+      if (typeof item === "string") {
+        values.push(item);
+      } else if (Array.isArray(item)) {
+        values.push.apply(values, collectStrings(item));
+      }
+    });
+    return values;
+  }
+
+  function isLikelySourceId(value) {
+    return /^[A-Za-z0-9_-]{8,}$/.test(String(value || "")) && !String(value).includes("google");
   }
 
   function normalizeUrl(value) {
@@ -335,6 +573,7 @@
 
     try {
       const parsed = new URL(value);
+      canonicalizeGoogleUrl(parsed);
       parsed.hash = "";
       return parsed.toString().replace(/\/$/, "");
     } catch (error) {
@@ -342,9 +581,36 @@
     }
   }
 
+  function canonicalizeGoogleUrl(parsed) {
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    if (host === "docs.google.com") {
+      parsed.pathname = parsed.pathname.replace(/\/u\/\d+\//, "/");
+      parsed.searchParams.delete("authuser");
+      parsed.searchParams.delete("usp");
+      parsed.searchParams.delete("tab");
+      parsed.searchParams.delete("ouid");
+      parsed.searchParams.delete("rtpof");
+      parsed.searchParams.delete("sd");
+    }
+  }
+
   function clearSourceCache(sourceCache, notebookId, requestedAuthUser) {
-    const exactKey = `${requestedAuthUser === undefined ? "default" : String(requestedAuthUser)}:${notebookId}`;
+    const authUser = normalizeAuthUser(requestedAuthUser);
+    const exactKey = `${authUser === undefined ? "default" : String(authUser)}:${notebookId}`;
     sourceCache.delete(exactKey);
+  }
+
+  function normalizeAuthUser(value) {
+    if (value === null || value === undefined || value === "") {
+      return undefined;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return undefined;
+    }
+
+    return parsed;
   }
 
   return {
@@ -354,6 +620,11 @@
     parseNotebookList,
     parseSourceList,
     buildUrlSourcePayload,
-    buildTextSourcePayload
+    buildDriveSourcePayload,
+    buildTextSourcePayload,
+    parseDriveSource,
+    extractCreatedSourceId,
+    probeAccount,
+    normalizeUrl
   };
 });

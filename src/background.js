@@ -5,6 +5,7 @@ importScripts(
   "core/clip/dedupe.js",
   "background/tabMessageBridge.js",
   "background/notebooklmDataService.js",
+  "writers/notebooklm-dom/notebookDomWriter.js",
   "writers/notebooklm-rpc/notebookRpcWriter.js",
   "background/jobRunner.js"
 );
@@ -24,8 +25,36 @@ importScripts(
       "src/content/page-content.js"
     ]
   });
-  const writer = ClipperNotebookRpcWriter.createNotebookRpcWriter({
+  const notebookTabMessageBridge = ClipperTabMessageBridge.createTabMessageBridge(chrome, {
+    contentScriptFiles: [
+      "src/shared/clipModels.js",
+      "src/lib/notebookAutomation.js",
+      "src/content/notebook-content.js"
+    ],
+    canInject(url) {
+      if (!url) {
+        return false;
+      }
+
+      try {
+        const parsed = new URL(url);
+        return /^https?:$/.test(parsed.protocol) && parsed.hostname === "notebooklm.google.com";
+      } catch (error) {
+        return false;
+      }
+    }
+  });
+  const rpcWriter = ClipperNotebookRpcWriter.createNotebookRpcWriter({
     notebookService
+  });
+  const domWriter = ClipperNotebookDomWriter.createNotebookDomWriter({
+    chromeLike: chrome,
+    notebookService,
+    messageBridge: notebookTabMessageBridge
+  });
+  const writer = createHybridWriter({
+    rpcWriter,
+    domWriter
   });
   const jobRunner = ClipperJobRunner.createJobRunner({
     writer,
@@ -89,6 +118,12 @@ importScripts(
           return;
         }
 
+        if (message.type === "GET_ACCOUNTS") {
+          const accounts = await notebookService.listAccounts(Boolean(message.forceRefresh));
+          sendResponse({ ok: true, accounts });
+          return;
+        }
+
         if (message.type === "SAVE_SETTINGS") {
           sendResponse({ ok: true, settings: await settingsRepo.save(message.settings || {}) });
           return;
@@ -100,7 +135,9 @@ importScripts(
         }
 
         if (message.type === "GET_NOTEBOOKS") {
-          const notebooks = await notebookService.listNotebooks(undefined, Boolean(message.forceRefresh));
+          const settings = await settingsRepo.get();
+          const authUser = resolveRequestedAuthUser(message.authUser, settings);
+          const notebooks = await notebookService.listNotebooks(authUser, Boolean(message.forceRefresh));
           sendResponse({ ok: true, notebooks });
           return;
         }
@@ -140,10 +177,6 @@ importScripts(
   });
 
   async function clipCurrentPage(requestedMode) {
-    const settings = await settingsRepo.get();
-    const clipMode = requestedMode || settings.clipMode || "auto";
-    const targetNotebook = resolveTargetNotebook(settings);
-
     const pageTab = await getActiveTab();
     if (!pageTab || !pageTab.id || !pageTab.url) {
       throw new Error("Could not detect the current tab.");
@@ -156,6 +189,9 @@ importScripts(
       throw new Error("This extension only works on normal web pages.");
     }
 
+    const settings = await settingsRepo.get();
+    const clipMode = requestedMode || settings.clipMode || "auto";
+    const targetNotebook = resolveTargetNotebook(settings, pageTab.url);
     const documentRef = await extractClipDocument(pageTab.id);
     return runClipRequest({
       targetNotebook,
@@ -170,8 +206,6 @@ importScripts(
       throw new Error("No selected text was provided.");
     }
 
-    const settings = await settingsRepo.get();
-    const targetNotebook = resolveTargetNotebook(settings);
     const activeTab = tab && tab.id ? tab : await getActiveTab();
     if (!activeTab || !activeTab.id || !activeTab.url) {
       throw new Error("Could not detect the selected tab.");
@@ -181,6 +215,8 @@ importScripts(
       throw new Error("Selection clipping only works on normal web pages.");
     }
 
+    const settings = await settingsRepo.get();
+    const targetNotebook = resolveTargetNotebook(settings, activeTab.url);
     const selectionDocument = buildSelectionDocument(
       {
         title: activeTab.title || "Current page",
@@ -241,9 +277,10 @@ importScripts(
     return response.document;
   }
 
-  function resolveTargetNotebook(settings) {
+  function resolveTargetNotebook(settings, fallbackUrl) {
     const notebookId = settings.notebookId || notebookService.parseNotebookId(settings.notebookUrl);
     const notebookUrl = settings.notebookUrl || (notebookId ? notebookService.buildNotebookUrl(notebookId) : "");
+    const authUser = resolveRequestedAuthUser(null, settings, fallbackUrl);
 
     if (!notebookUrl) {
       throw new Error("Add your NotebookLM notebook URL first.");
@@ -252,8 +289,65 @@ importScripts(
     return {
       id: notebookId || notebookUrl,
       name: settings.notebookName || "NotebookLM notebook",
-      url: notebookUrl
+      url: notebookUrl,
+      authUser
     };
+  }
+
+  function resolveRequestedAuthUser(explicitAuthUser, settings, fallbackUrl) {
+    const explicit = parseOptionalAuthUser(explicitAuthUser);
+    if (explicit !== null) {
+      return explicit;
+    }
+
+    const stored = parseOptionalAuthUser(settings && settings.selectedAuthUser);
+    if (stored !== null) {
+      return stored;
+    }
+
+    const notebookAuthUser = parseAuthUserFromUrl(settings && settings.notebookUrl);
+    if (notebookAuthUser !== null) {
+      return notebookAuthUser;
+    }
+
+    return parseAuthUserFromUrl(fallbackUrl);
+  }
+
+  function parseAuthUserFromUrl(input) {
+    const value = String(input || "").trim();
+    if (!value) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(value);
+      const queryAuthUser = parseOptionalAuthUser(parsed.searchParams.get("authuser"));
+      if (queryAuthUser !== null) {
+        return queryAuthUser;
+      }
+
+      const pathMatch = parsed.pathname.match(/\/u\/(\d+)\//);
+      if (pathMatch) {
+        return parseOptionalAuthUser(pathMatch[1]);
+      }
+    } catch (error) {
+      return null;
+    }
+
+    return null;
+  }
+
+  function parseOptionalAuthUser(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return null;
+    }
+
+    return parsed;
   }
 
   function runClipRequest(input) {
@@ -421,5 +515,40 @@ importScripts(
 
   function sendMessageToTab(tabId, message) {
     return tabMessageBridge.sendMessageToTab(tabId, message);
+  }
+
+  function createHybridWriter(dependencies) {
+    const primaryWriter = dependencies.rpcWriter;
+    const fallbackWriter = dependencies.domWriter;
+
+    return {
+      async addClip(request) {
+        if (shouldUseNotebookDomWriter(request)) {
+          return fallbackWriter.addClip(request);
+        }
+
+        return primaryWriter.addClip(request);
+      }
+    };
+  }
+
+  function shouldUseNotebookDomWriter(request) {
+    if (!request || request.mode === "text") {
+      return false;
+    }
+
+    const sourceUrl =
+      request.document && (request.document.canonicalUrl || request.document.sourceUrl || "");
+    if (!sourceUrl || !request.targetNotebook || !request.targetNotebook.url) {
+      return false;
+    }
+
+    try {
+      const parsed = new URL(sourceUrl);
+      const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+      return host === "docs.google.com" || host === "drive.google.com";
+    } catch (error) {
+      return false;
+    }
   }
 })();

@@ -39,6 +39,39 @@ describe("notebook automation", () => {
     expect(clicked).toBe(1);
   });
 
+  test("waits for an enabled submit button after triggering input events", async () => {
+    document.body.innerHTML = `
+      <button id="add-source">Add source</button>
+      <button id="website">Website URL</button>
+      <input id="url-input" type="url" placeholder="Paste URL" />
+      <button id="submit" disabled>Import</button>
+    `;
+
+    const urlInput = document.getElementById("url-input");
+    const submit = document.getElementById("submit");
+    let clicked = 0;
+
+    urlInput.addEventListener("input", () => {
+      submit.disabled = !urlInput.value;
+    });
+    submit.addEventListener("click", () => {
+      clicked += 1;
+    });
+
+    const result = await clipPage(document, {
+      clipMode: "url",
+      page: {
+        url: "https://example.com/controlled",
+        fallbackText: "Ignored fallback"
+      }
+    });
+
+    expect(result.mode).toBe("url");
+    expect(urlInput.value).toBe("https://example.com/controlled");
+    expect(submit.disabled).toBe(false);
+    expect(clicked).toBe(1);
+  });
+
   test("falls back to copied text when website import is not present", async () => {
     document.body.innerHTML = `
       <button id="add-source">Add source</button>

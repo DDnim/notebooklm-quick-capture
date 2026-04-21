@@ -9,7 +9,8 @@
     notebookId: "",
     notebookName: "",
     notebookUrl: "",
-    clipMode: "auto"
+    clipMode: "auto",
+    selectedAuthUser: null
   };
 
   function createSettingsRepo(chromeLike) {
@@ -40,8 +41,22 @@
       notebookId: typeof settings.notebookId === "string" ? settings.notebookId.trim() : "",
       notebookName: typeof settings.notebookName === "string" ? settings.notebookName.trim() : "",
       notebookUrl: typeof settings.notebookUrl === "string" ? settings.notebookUrl.trim() : "",
-      clipMode: ["auto", "url", "text"].includes(settings.clipMode) ? settings.clipMode : "auto"
+      clipMode: ["auto", "url", "text"].includes(settings.clipMode) ? settings.clipMode : "auto",
+      selectedAuthUser: parseOptionalAuthUser(settings.selectedAuthUser)
     };
+  }
+
+  function parseOptionalAuthUser(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return null;
+    }
+
+    return parsed;
   }
 
   function getStorage(chromeLike, area, key) {

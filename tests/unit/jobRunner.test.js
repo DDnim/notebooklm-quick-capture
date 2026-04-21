@@ -108,4 +108,57 @@ describe("job runner", () => {
     expect(writerCalls).toBe(0);
     expect(pushes[0].result).toBe("duplicate");
   });
+
+  test("persists a handoff result when user confirmation is still required", async () => {
+    const pushes = [];
+    const runner = createJobRunner({
+      writer: {
+        async addClip() {
+          return {
+            ok: true,
+            writer: "notebooklm-dom",
+            modeUsed: "url",
+            awaitingUserAction: true,
+            historyResult: "user_action"
+          };
+        }
+      },
+      historyRepo: {
+        async list() {
+          return [];
+        },
+        async push(entry) {
+          pushes.push(entry);
+          return pushes;
+        }
+      },
+      dedupeService: {
+        findHistoryDuplicate() {
+          return null;
+        }
+      },
+      modelsApi: require("../../src/shared/clipModels.js")
+    });
+
+    const request = createClipRequest({
+      targetNotebook: {
+        id: "notebook-1",
+        name: "Notebook",
+        url: "https://notebooklm.google.com/notebook/demo"
+      },
+      mode: "url",
+      document: createClipDocument({
+        kind: "web",
+        sourceUrl: "https://docs.google.com/document/d/abc123/edit",
+        title: "Story",
+        content: "Body"
+      })
+    });
+
+    const result = await runner.runClip(request);
+
+    expect(result.awaitingUserAction).toBe(true);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0].result).toBe("user_action");
+  });
 });

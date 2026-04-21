@@ -12,11 +12,12 @@
     const contentScriptFiles = (options && options.contentScriptFiles) || [];
     const canInject =
       (options && options.canInject) || canInjectContentScript;
+    const messageTimeoutMs = (options && options.messageTimeoutMs) || 20000;
 
     return {
       async sendMessageToTab(tabId, message) {
         try {
-          return await sendRawMessage(chromeLike, tabId, message);
+          return await sendRawMessage(chromeLike, tabId, message, messageTimeoutMs);
         } catch (error) {
           if (!shouldRetryAfterMissingReceiver(error)) {
             throw error;
@@ -37,7 +38,7 @@
           }
 
           try {
-            return await sendRawMessage(chromeLike, tabId, message);
+            return await sendRawMessage(chromeLike, tabId, message, messageTimeoutMs);
           } catch (retryError) {
             if (shouldRetryAfterMissingReceiver(retryError)) {
               throw new Error(DEFAULT_CONNECTION_ERROR);
@@ -73,9 +74,14 @@
     return chromeLike.tabs.get(tabId);
   }
 
-  function sendRawMessage(chromeLike, tabId, message) {
+  function sendRawMessage(chromeLike, tabId, message, timeoutMs) {
     return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Timed out while waiting for the page to respond."));
+      }, timeoutMs);
+
       chromeLike.tabs.sendMessage(tabId, message, (response) => {
+        clearTimeout(timeoutId);
         const error = chromeLike.runtime.lastError;
         if (error) {
           reject(new Error(error.message));

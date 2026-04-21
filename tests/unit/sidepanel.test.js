@@ -10,6 +10,8 @@ describe("side panel", () => {
   beforeEach(() => {
     document.body.innerHTML = `
       <p id="sideSummary"></p>
+      <select id="accountSelect"></select>
+      <button id="refreshAccounts" type="button"></button>
       <select id="notebookSelect"></select>
       <button id="clipUrlFirst" type="button"></button>
       <button id="clipTextFirst" type="button"></button>
@@ -45,14 +47,24 @@ describe("side panel", () => {
 
   test("persists the selected notebook on change without any fallback URL input", async () => {
     const messages = [];
+    const accounts = [{ authUser: 1, email: "writer@example.com", label: "writer@example.com" }];
     const notebook = {
       id: "notebook-1",
       name: "Research notebook",
       url: "https://notebooklm.google.com/notebook/notebook-1"
     };
     const responses = {
-      GET_SETTINGS: { ok: true, settings: { notebookId: notebook.id, notebookName: notebook.name, notebookUrl: notebook.url } },
+      GET_SETTINGS: {
+        ok: true,
+        settings: {
+          notebookId: notebook.id,
+          notebookName: notebook.name,
+          notebookUrl: notebook.url,
+          selectedAuthUser: 1
+        }
+      },
       GET_HISTORY: { ok: true, history: [] },
+      GET_ACCOUNTS: { ok: true, accounts },
       GET_NOTEBOOKS: { ok: true, notebooks: [notebook] },
       SAVE_SETTINGS: ({ settings }) => ({ ok: true, settings })
     };
@@ -69,6 +81,7 @@ describe("side panel", () => {
     expect(messages.at(-1)).toEqual({
       type: "SAVE_SETTINGS",
       settings: {
+        selectedAuthUser: 1,
         notebookId: notebook.id,
         notebookName: notebook.name,
         notebookUrl: notebook.url
@@ -80,7 +93,68 @@ describe("side panel", () => {
     expect(summary.textContent).toBe("Selected notebook: ·Research notebook");
     expect(link).not.toBeNull();
     expect(link.href).toBe(notebook.url);
-    expect(document.getElementById("sideStatus").textContent).toBe("");
+    expect(document.getElementById("sideStatus").textContent).toBe("Notebook updated.");
+  });
+
+  test("switches account and refreshes notebooks in the side panel", async () => {
+    const messages = [];
+    const responses = {
+      GET_SETTINGS: {
+        ok: true,
+        settings: {
+          notebookId: "default-notebook",
+          notebookName: "Default",
+          notebookUrl: "https://notebooklm.google.com/notebook/default-notebook",
+          selectedAuthUser: null
+        }
+      },
+      GET_HISTORY: { ok: true, history: [] },
+      GET_ACCOUNTS: {
+        ok: true,
+        accounts: [
+          { authUser: 0, email: "default@example.com", label: "default@example.com (default)" },
+          { authUser: 3, email: "private@example.com", label: "private@example.com" }
+        ]
+      },
+      GET_NOTEBOOKS: ({ authUser }) => ({
+        ok: true,
+        notebooks:
+          authUser === 3
+            ? [{ id: "private-notebook", name: "Private", url: "https://notebooklm.google.com/notebook/private-notebook" }]
+            : [{ id: "default-notebook", name: "Default", url: "https://notebooklm.google.com/notebook/default-notebook" }]
+      }),
+      SAVE_SETTINGS: ({ settings }) => ({
+        ok: true,
+        settings: {
+          notebookId: "",
+          notebookName: "",
+          notebookUrl: "",
+          selectedAuthUser: settings.selectedAuthUser
+        }
+      })
+    };
+
+    global.chrome = createChromeStub(messages, responses);
+    require(sidepanelScriptPath);
+    await flushAsyncWork();
+
+    const accountSelect = document.getElementById("accountSelect");
+    accountSelect.value = "3";
+    accountSelect.dispatchEvent(new Event("change"));
+    await flushAsyncWork();
+
+    expect(messages).toContainEqual({
+      type: "SAVE_SETTINGS",
+      settings: {
+        selectedAuthUser: 3
+      }
+    });
+    expect(messages).toContainEqual({
+      type: "GET_NOTEBOOKS",
+      authUser: 3,
+      forceRefresh: true
+    });
+    expect(document.getElementById("sideStatus").textContent).toBe("Account updated. Choose a notebook.");
   });
 });
 

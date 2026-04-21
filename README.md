@@ -6,7 +6,7 @@ This is a lightweight Chrome extension that clips the current page into a specif
 
 - Saves the current page with explicit `URL first` and `Text first` actions
 - Saves the current browser selection with `Selection first` from the right-click menu
-- Remembers your default notebook selection or fallback notebook URL
+- Remembers your default notebook selection
 - Keeps a small recent-history list in the side panel
 
 ## Architecture
@@ -45,10 +45,9 @@ NotebookLM does not expose a documented public clipping API for this flow, so th
 
 ## Use it
 
-1. Open the NotebookLM notebook you want to clip into.
-2. Copy its URL.
-3. Open the extension popup and paste that URL into `Notebook URL`, or pick a notebook from the list.
-4. Browse to any normal web page and use one of these entry points:
+1. Open the extension popup or side panel.
+2. Pick a NotebookLM notebook from the list.
+3. Browse to any normal web page and use one of these entry points:
    - `URL first` sends the page URL as a website source
    - `Text first` extracts the page body and sends it as copied text
    - `Selection first` is available from the page right-click menu and sends the highlighted text as copied text

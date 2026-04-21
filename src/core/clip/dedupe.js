@@ -22,6 +22,16 @@
 
       findRemoteDuplicate(documentRef, sources) {
         const preferredUrl = normalizeForCompare(modelsApi.getPreferredSourceUrl(documentRef));
+        const driveFileId = extractDriveFileId(modelsApi.getPreferredSourceUrl(documentRef));
+
+        if (driveFileId) {
+          return (
+            (sources || []).find((source) => {
+              return source.driveFileId === driveFileId;
+            }) || null
+          );
+        }
+
         if (!preferredUrl) {
           return null;
         }
@@ -39,6 +49,31 @@
     return String(value || "")
       .trim()
       .replace(/\/$/, "");
+  }
+
+  function extractDriveFileId(value) {
+    const input = String(value || "").trim();
+    if (!input) {
+      return "";
+    }
+
+    try {
+      const parsed = new URL(input);
+      const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+      const path = parsed.pathname;
+      if (host !== "docs.google.com") {
+        return "";
+      }
+
+      const match =
+        path.match(/^\/document(?:\/u\/\d+)?\/d\/([^/]+)/) ||
+        path.match(/^\/presentation(?:\/u\/\d+)?\/d\/([^/]+)/) ||
+        path.match(/^\/spreadsheets(?:\/u\/\d+)?\/d\/([^/]+)/);
+
+      return match ? match[1] : "";
+    } catch (error) {
+      return "";
+    }
   }
 
   return {

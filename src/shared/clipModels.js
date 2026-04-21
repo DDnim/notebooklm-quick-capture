@@ -42,7 +42,8 @@
       targetNotebook: {
         id: input.targetNotebook.id,
         name: input.targetNotebook.name || "NotebookLM notebook",
-        url: input.targetNotebook.url
+        url: input.targetNotebook.url,
+        authUser: parseOptionalAuthUser(input.targetNotebook.authUser)
       },
       mode: input.mode || "auto",
       document: input.document
@@ -77,7 +78,7 @@
       url: historyUrl,
       clipMode: request.mode,
       timestamp: new Date().toISOString(),
-      result: result.modeUsed || result.mode || "unknown",
+      result: result.historyResult || result.modeUsed || result.mode || "unknown",
       notebookUrl: request.targetNotebook.url
     };
   }
@@ -89,11 +90,38 @@
 
     try {
       const parsed = new URL(value);
+      canonicalizeGoogleUrl(parsed);
       parsed.hash = "";
       return parsed.toString();
     } catch (error) {
       return String(value).trim();
     }
+  }
+
+  function canonicalizeGoogleUrl(parsed) {
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    if (host === "docs.google.com") {
+      parsed.pathname = parsed.pathname.replace(/\/u\/\d+\//, "/");
+      parsed.searchParams.delete("authuser");
+      parsed.searchParams.delete("usp");
+      parsed.searchParams.delete("tab");
+      parsed.searchParams.delete("ouid");
+      parsed.searchParams.delete("rtpof");
+      parsed.searchParams.delete("sd");
+    }
+  }
+
+  function parseOptionalAuthUser(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return null;
+    }
+
+    return parsed;
   }
 
   function createId() {

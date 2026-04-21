@@ -9,6 +9,8 @@ const popupHtmlPath = path.join(__dirname, "../../popup.html");
 describe("popup", () => {
   beforeEach(() => {
     document.body.innerHTML = `
+      <select id="accountSelect"></select>
+      <button id="refreshAccounts" type="button"></button>
       <select id="notebookSelect"></select>
       <button id="refreshNotebooks" type="button"></button>
       <button id="clipUrlFirst" type="button"></button>
@@ -34,13 +36,23 @@ describe("popup", () => {
 
   test("persists the selected notebook on change", async () => {
     const messages = [];
+    const accounts = [{ authUser: 1, email: "writer@example.com", label: "writer@example.com" }];
     const notebook = {
       id: "notebook-1",
       name: "Research notebook",
       url: "https://notebooklm.google.com/notebook/notebook-1"
     };
     const responses = {
-      GET_SETTINGS: { ok: true, settings: { notebookId: notebook.id, notebookName: notebook.name, notebookUrl: notebook.url } },
+      GET_SETTINGS: {
+        ok: true,
+        settings: {
+          notebookId: notebook.id,
+          notebookName: notebook.name,
+          notebookUrl: notebook.url,
+          selectedAuthUser: 1
+        }
+      },
+      GET_ACCOUNTS: { ok: true, accounts },
       GET_NOTEBOOKS: { ok: true, notebooks: [notebook] },
       SAVE_SETTINGS: ({ settings }) => ({ ok: true, settings })
     };
@@ -48,6 +60,9 @@ describe("popup", () => {
     global.chrome = createChromeStub(messages, responses);
     require(popupScriptPath);
     await flushAsyncWork();
+
+    expect(messages).toContainEqual({ type: "GET_ACCOUNTS" });
+    expect(messages).toContainEqual({ type: "GET_NOTEBOOKS", authUser: 1 });
 
     const select = document.getElementById("notebookSelect");
     select.value = notebook.id;
@@ -57,12 +72,117 @@ describe("popup", () => {
     expect(messages.at(-1)).toEqual({
       type: "SAVE_SETTINGS",
       settings: {
+        selectedAuthUser: 1,
         notebookId: notebook.id,
         notebookName: notebook.name,
         notebookUrl: notebook.url
       }
     });
     expect(document.getElementById("status").textContent).toBe("Notebook updated.");
+  });
+
+  test("switches account and refreshes notebooks for that authuser", async () => {
+    const messages = [];
+    const notebooksByAccount = {
+      default: [{ id: "default-notebook", name: "Default", url: "https://notebooklm.google.com/notebook/default-notebook" }],
+      2: [{ id: "account-two", name: "Account Two", url: "https://notebooklm.google.com/notebook/account-two" }]
+    };
+    const responses = {
+      GET_SETTINGS: {
+        ok: true,
+        settings: {
+          notebookId: "default-notebook",
+          notebookName: "Default",
+          notebookUrl: "https://notebooklm.google.com/notebook/default-notebook",
+          selectedAuthUser: null
+        }
+      },
+      GET_ACCOUNTS: {
+        ok: true,
+        accounts: [
+          { authUser: 0, email: "default@example.com", label: "default@example.com (default)" },
+          { authUser: 2, email: "team@example.com", label: "team@example.com" }
+        ]
+      },
+      GET_NOTEBOOKS: ({ authUser }) => ({
+        ok: true,
+        notebooks: notebooksByAccount[authUser === undefined ? "default" : authUser] || []
+      }),
+      SAVE_SETTINGS: ({ settings }) => ({
+        ok: true,
+        settings: {
+          notebookId: "",
+          notebookName: "",
+          notebookUrl: "",
+          selectedAuthUser: settings.selectedAuthUser
+        }
+      })
+    };
+
+    global.chrome = createChromeStub(messages, responses);
+    require(popupScriptPath);
+    await flushAsyncWork();
+
+    const accountSelect = document.getElementById("accountSelect");
+    accountSelect.value = "2";
+    accountSelect.dispatchEvent(new Event("change"));
+    await flushAsyncWork();
+
+    expect(messages).toContainEqual({
+      type: "SAVE_SETTINGS",
+      settings: {
+        selectedAuthUser: 2
+      }
+    });
+    expect(messages).toContainEqual({
+      type: "GET_NOTEBOOKS",
+      authUser: 2,
+      forceRefresh: true
+    });
+    expect(document.getElementById("status").textContent).toBe("Account updated. Choose a notebook.");
+  });
+
+  test("shows a manual Insert handoff message for Google Workspace URLs", async () => {
+    const messages = [];
+    const notebook = {
+      id: "notebook-1",
+      name: "Research notebook",
+      url: "https://notebooklm.google.com/notebook/notebook-1"
+    };
+    const responses = {
+      GET_SETTINGS: {
+        ok: true,
+        settings: {
+          notebookId: notebook.id,
+          notebookName: notebook.name,
+          notebookUrl: notebook.url,
+          selectedAuthUser: null
+        }
+      },
+      GET_ACCOUNTS: { ok: true, accounts: [] },
+      GET_NOTEBOOKS: { ok: true, notebooks: [notebook] },
+      SAVE_SETTINGS: ({ settings }) => ({ ok: true, settings }),
+      START_CLIP: {
+        ok: true,
+        result: {
+          ok: true,
+          modeUsed: "url",
+          awaitingUserAction: true,
+          userAction: "click_insert"
+        }
+      }
+    };
+
+    global.chrome = createChromeStub(messages, responses);
+    require(popupScriptPath);
+    await flushAsyncWork();
+
+    document.getElementById("clipUrlFirst").click();
+    await flushAsyncWork();
+
+    expect(document.getElementById("status").textContent).toBe(
+      "NotebookLM is ready. Click Insert in the opened notebook to finish adding this Google Drive URL."
+    );
   });
 });
 

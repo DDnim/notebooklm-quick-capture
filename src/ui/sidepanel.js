@@ -1,5 +1,7 @@
 (function () {
   const summaryNode = document.getElementById("sideSummary");
+  const accountSelect = document.getElementById("accountSelect");
+  const refreshAccountsButton = document.getElementById("refreshAccounts");
   const notebookSelect = document.getElementById("notebookSelect");
   const clipUrlFirstButton = document.getElementById("clipUrlFirst");
   const clipTextFirstButton = document.getElementById("clipTextFirst");
@@ -11,35 +13,47 @@
   const historyList = document.getElementById("historyList");
   const refreshButton = document.getElementById("refreshHistory");
   const refreshNotebooksButton = document.getElementById("refreshNotebooks");
+  let accounts = [];
   let notebooks = [];
 
   refreshButton.addEventListener("click", refresh);
+  refreshAccountsButton.addEventListener("click", onRefreshAccounts);
   refreshNotebooksButton.addEventListener("click", onRefreshNotebooks);
   clipUrlFirstButton.addEventListener("click", () => onClipPage("url"));
   clipTextFirstButton.addEventListener("click", () => onClipPage("text"));
   saveManualTextButton.addEventListener("click", onSaveManualText);
+  accountSelect.addEventListener("change", onAccountSelectChange);
   notebookSelect.addEventListener("change", onNotebookSelectChange);
   refresh().catch(() => {
     summaryNode.textContent = "Could not load history.";
   });
 
   async function refresh() {
-    const [settingsResponse, historyResponse, notebooksResponse] = await Promise.all([
-      sendMessage({ type: "GET_SETTINGS" }),
-      sendMessage({ type: "GET_HISTORY" }),
-      sendMessage({ type: "GET_NOTEBOOKS" })
-    ]);
-
+    const settingsResponse = await sendMessage({ type: "GET_SETTINGS" });
+    const historyResponse = await sendMessage({ type: "GET_HISTORY" });
     if (!settingsResponse.ok || !historyResponse.ok) {
       throw new Error("Could not load side panel state.");
     }
 
+    const selectedAuthUser = parseOptionalAuthUser(settingsResponse.settings.selectedAuthUser);
+    const [accountsResponse, notebooksResponse] = await Promise.all([
+      sendMessage({ type: "GET_ACCOUNTS" }),
+      sendMessage(buildNotebookMessage(selectedAuthUser))
+    ]);
+
+    accounts = accountsResponse.ok ? accountsResponse.accounts || [] : [];
     notebooks = notebooksResponse.ok ? notebooksResponse.notebooks || [] : [];
+    populateAccountSelect(accounts, selectedAuthUser);
     populateNotebookSelect(notebooks, settingsResponse.settings);
-    if (!notebooksResponse.ok && isNotebookListUnsupported(notebooksResponse)) {
-      renderStatus("Notebook list is unavailable in the current background worker.", true);
-    }
     renderSummary(settingsResponse.settings);
+
+    if (!accountsResponse.ok) {
+      renderStatus(accountsResponse.error || "Could not load Google accounts.", true);
+    } else if (!notebooksResponse.ok && isNotebookListUnsupported(notebooksResponse)) {
+      renderStatus("Notebook list is unavailable in the current background worker.", true);
+    } else if (!notebooksResponse.ok) {
+      renderStatus(notebooksResponse.error || "Could not load notebooks.", true);
+    }
 
     historyList.innerHTML = "";
 
@@ -63,30 +77,22 @@
     });
   }
 
-  async function onRefreshNotebooks() {
-    renderStatus("Refreshing notebooks...");
-    const [settingsResponse, notebooksResponse] = await Promise.all([
-      sendMessage({ type: "GET_SETTINGS" }),
-      sendMessage({ type: "GET_NOTEBOOKS", forceRefresh: true })
-    ]);
-
-    if (!settingsResponse.ok || !notebooksResponse.ok) {
-      if (isNotebookListUnsupported(notebooksResponse)) {
-        notebooks = [];
-        populateNotebookSelect(notebooks, settingsResponse.ok ? settingsResponse.settings : {});
-        renderStatus("Notebook list is unavailable in the current background worker.", true);
-        return;
-      }
-      renderStatus(
-        (notebooksResponse && notebooksResponse.error) || "Could not refresh notebook list.",
-        true
-      );
+  async function onRefreshAccounts() {
+    renderStatus("Refreshing Google accounts...");
+    const accountsResponse = await sendMessage({ type: "GET_ACCOUNTS", forceRefresh: true });
+    if (!accountsResponse.ok) {
+      renderStatus(accountsResponse.error || "Could not refresh Google accounts.", true);
       return;
     }
 
-    notebooks = notebooksResponse.notebooks || [];
-    populateNotebookSelect(notebooks, settingsResponse.settings);
-    renderStatus(notebooks.length > 0 ? "Notebook list refreshed." : "No notebooks found.");
+    accounts = accountsResponse.accounts || [];
+    populateAccountSelect(accounts, getSelectedAuthUser());
+    await refreshNotebooksForSelectedAccount(true, false);
+  }
+
+  async function onRefreshNotebooks() {
+    renderStatus("Refreshing notebooks...");
+    await refreshNotebooksForSelectedAccount(true, true);
   }
 
   async function onClipPage(mode) {
@@ -94,7 +100,6 @@
     renderStatus(mode === "url" ? "Saving current page as a website source..." : "Saving current page as copied text...");
 
     const saveResponse = await saveSelectedNotebookSettings();
-
     if (!saveResponse.ok) {
       renderStatus(saveResponse.error || "Could not save notebook.", true);
       setClipButtonsDisabled(false);
@@ -130,7 +135,6 @@
     renderStatus("Saving typed text to NotebookLM...");
 
     const saveResponse = await saveSelectedNotebookSettings();
-
     if (!saveResponse.ok) {
       renderStatus(saveResponse.error || "Could not save notebook.", true);
       setClipButtonsDisabled(false);
@@ -161,9 +165,34 @@
     saveManualTextButton.disabled = false;
   }
 
+  async function onAccountSelectChange() {
+    renderStatusMeta("");
+    renderStatus("Switching Google account...");
+
+    const saveResponse = await persistSelection(null, {
+      preserveNotebookWhenMissing: true
+    });
+    if (!saveResponse.ok) {
+      renderStatus(saveResponse.error || "Could not save Google account.", true);
+      return;
+    }
+
+    await refreshNotebooksForSelectedAccount(true, false);
+  }
+
   async function onNotebookSelectChange() {
     renderStatusMeta("");
     if (!notebookSelect.value) {
+      const saveResponse = await persistSelection(null, {
+        preserveNotebookWhenMissing: false
+      });
+      if (!saveResponse.ok) {
+        renderStatus(saveResponse.error || "Could not clear notebook.", true);
+        return;
+      }
+
+      renderSummary(saveResponse.settings);
+      renderStatus("Notebook cleared.", false);
       return;
     }
 
@@ -175,13 +204,87 @@
     }
 
     renderSummary(response.settings);
-    renderStatus("");
+    renderStatus("Notebook updated.", false, {
+      notebookUrl: response.settings.notebookUrl
+    });
+  }
+
+  async function refreshNotebooksForSelectedAccount(forceRefresh, preserveSelection) {
+    const selectedAuthUser = getSelectedAuthUser();
+    const [settingsResponse, notebooksResponse] = await Promise.all([
+      sendMessage({ type: "GET_SETTINGS" }),
+      sendMessage(buildNotebookMessage(selectedAuthUser, forceRefresh))
+    ]);
+
+    if (!settingsResponse.ok || !notebooksResponse.ok) {
+      if (isNotebookListUnsupported(notebooksResponse)) {
+        notebooks = [];
+        populateNotebookSelect(notebooks, settingsResponse.ok ? settingsResponse.settings : {});
+        renderSummary(settingsResponse.ok ? settingsResponse.settings : {});
+        renderStatus("Notebook list is unavailable in the current background worker.", true);
+        return;
+      }
+
+      renderStatus(
+        (notebooksResponse && notebooksResponse.error) || "Could not refresh notebook list.",
+        true
+      );
+      return;
+    }
+
+    notebooks = notebooksResponse.notebooks || [];
+    const nextSettings = settingsResponse.settings || {};
+    const matchingNotebook = notebooks.find((notebook) => notebook.id === nextSettings.notebookId) || null;
+
+    if (!preserveSelection && !matchingNotebook) {
+      const clearedResponse = await persistSelection(null, {
+        preserveNotebookWhenMissing: false
+      });
+      if (!clearedResponse.ok) {
+        renderStatus(clearedResponse.error || "Could not update settings.", true);
+        return;
+      }
+
+      populateNotebookSelect(notebooks, clearedResponse.settings);
+      renderSummary(clearedResponse.settings);
+      renderStatus(notebooks.length > 0 ? "Account updated. Choose a notebook." : "No notebooks found.", false);
+      return;
+    }
+
+    populateNotebookSelect(notebooks, nextSettings);
+    renderSummary(nextSettings);
+    if (matchingNotebook) {
+      renderStatus(forceRefresh ? "Notebook list refreshed." : "Account updated.", false, {
+        notebookUrl: matchingNotebook.url
+      });
+      return;
+    }
+
+    renderStatus(notebooks.length > 0 ? "Notebook list refreshed." : "No notebooks found.", false);
   }
 
   function sendMessage(message) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(message, resolve);
     });
+  }
+
+  function populateAccountSelect(items, selectedAuthUser) {
+    accountSelect.innerHTML = "";
+
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = items.length > 0 ? "Use browser default account" : "Detected browser session";
+    accountSelect.appendChild(defaultOption);
+
+    items.forEach((account) => {
+      const option = document.createElement("option");
+      option.value = String(account.authUser);
+      option.textContent = account.label || account.email || `Account ${account.authUser}`;
+      accountSelect.appendChild(option);
+    });
+
+    accountSelect.value = selectedAuthUser === null ? "" : String(selectedAuthUser);
   }
 
   function populateNotebookSelect(items, settings) {
@@ -199,9 +302,16 @@
       notebookSelect.appendChild(option);
     });
 
-    if (settings.notebookId) {
+    if (settings.notebookId && items.some((notebook) => notebook.id === settings.notebookId)) {
       notebookSelect.value = settings.notebookId;
+      return;
     }
+
+    notebookSelect.value = "";
+  }
+
+  function getSelectedAuthUser() {
+    return parseOptionalAuthUser(accountSelect.value);
   }
 
   function getSelectedNotebook() {
@@ -217,13 +327,29 @@
       };
     }
 
+    return persistSelection(selected, {
+      preserveNotebookWhenMissing: false
+    });
+  }
+
+  async function persistSelection(selectedNotebook, options) {
+    const payload = {
+      selectedAuthUser: getSelectedAuthUser()
+    };
+
+    if (selectedNotebook) {
+      payload.notebookId = selectedNotebook.id;
+      payload.notebookName = selectedNotebook.name;
+      payload.notebookUrl = selectedNotebook.url;
+    } else if (!options || options.preserveNotebookWhenMissing !== true) {
+      payload.notebookId = "";
+      payload.notebookName = "";
+      payload.notebookUrl = "";
+    }
+
     return sendMessage({
       type: "SAVE_SETTINGS",
-      settings: {
-        notebookId: selected.id,
-        notebookName: selected.name,
-        notebookUrl: selected.url
-      }
+      settings: payload
     });
   }
 
@@ -293,6 +419,12 @@
     if (entry.result === "duplicate") {
       return "Skipped duplicate";
     }
+    if (entry.result === "user_action") {
+      return "Waiting for Insert click";
+    }
+    if (entry.result === "drive") {
+      return "Google Drive source";
+    }
     return entry.result === "url" ? "Website source" : "Copied text";
   }
 
@@ -300,19 +432,55 @@
     if (result.skipped) {
       return "This page is already saved in the selected notebook.";
     }
+    if (result.awaitingUserAction) {
+      return "NotebookLM is ready. Click Insert in the opened notebook to finish adding this Google Drive URL.";
+    }
+    if (result.verified === false && result.modeUsed === "drive") {
+      return "Google Drive source was accepted by NotebookLM and may take a moment to appear.";
+    }
     if (result.verified === false) {
       return "The request was sent to NotebookLM, but the new source could not be verified yet.";
+    }
+    if (result.modeUsed === "drive") {
+      return "Google Drive source added to NotebookLM.";
     }
     return result.modeUsed === "url"
       ? "Page added to NotebookLM as a website source."
       : "Page added to NotebookLM as copied text.";
   }
 
+  function buildNotebookMessage(authUser, forceRefresh) {
+    const message = {
+      type: "GET_NOTEBOOKS"
+    };
+    if (forceRefresh) {
+      message.forceRefresh = true;
+    }
+    if (authUser !== null) {
+      message.authUser = authUser;
+    }
+    return message;
+  }
+
+  function parseOptionalAuthUser(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return null;
+    }
+
+    return parsed;
+  }
+
   function escapeHtml(value) {
-    return String(value || "")
+    return String(value)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 })();

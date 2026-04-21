@@ -23,7 +23,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             };
 
       const result = await NotebookAutomation.clipDocument(document, payload.document, {
-        mode: payload.mode || "auto"
+        mode: payload.mode || "auto",
+        handoffMode: payload.handoffMode || ""
       });
       sendResponse({ ok: true, result });
     } catch (error) {
